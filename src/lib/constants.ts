@@ -63,26 +63,71 @@ export const BD_DISTRICTS: { district: string; division: string }[] = [
   { district: 'Bandarban', division: 'Chittagong' },
 ]
 
-export const SHIPPING_RATES: Record<string, number> = {
-  Dhaka: 60,
-  'Narayanganj': 60,
-  'Gazipur': 60,
-  'Narsingdi': 60,
-  'Manikganj': 80,
-  'Munshiganj': 80,
-  'Tangail': 80,
-  'Kishoreganj': 80,
-  'Faridpur': 100,
-  'Madaripur': 100,
-  'Gopalganj': 100,
+export type ShippingSettings = {
+  shipping_chattogram_rate: number
+  shipping_default_rate: number
+  free_shipping_threshold: number
 }
 
-export function getShippingCost(district: string): number {
-  if (SHIPPING_RATES[district] !== undefined) return SHIPPING_RATES[district]
-  return 120
+export function getShippingSettings(value: unknown): ShippingSettings | null {
+  if (!value || typeof value !== 'object') return null
+  const settings = value as Record<string, unknown>
+  const fields = ['shipping_chattogram_rate', 'shipping_default_rate', 'free_shipping_threshold'] as const
+  for (const field of fields) {
+    const amount = settings[field]
+    if (typeof amount !== 'number' || !Number.isInteger(amount) || amount < 0 || amount > 1000000) return null
+  }
+  if ((settings.free_shipping_threshold as number) === 0) return null
+  return {
+    shipping_chattogram_rate: settings.shipping_chattogram_rate as number,
+    shipping_default_rate: settings.shipping_default_rate as number,
+    free_shipping_threshold: settings.free_shipping_threshold as number,
+  }
 }
 
-export const FREE_SHIPPING_THRESHOLD = 3000
+export function parseShippingSettings(draft: Record<keyof ShippingSettings, string>): ShippingSettings | null {
+  const settings: Record<string, number> = {}
+  for (const field of ['shipping_chattogram_rate', 'shipping_default_rate', 'free_shipping_threshold'] as const) {
+    if (!/^\d+$/.test(draft[field].trim())) return null
+    settings[field] = Number(draft[field])
+  }
+  return getShippingSettings(settings)
+}
+
+export function getShippingCost(district: string, settings: ShippingSettings, subtotal = 0, freeShipping = false): number {
+  if (freeShipping || Math.round(subtotal * 100) >= settings.free_shipping_threshold * 100) return 0
+  const normalizedDistrict = district.trim().toLowerCase()
+  return ['chittagong', 'chattogram', 'চট্টগ্রাম'].includes(normalizedDistrict)
+    ? settings.shipping_chattogram_rate
+    : settings.shipping_default_rate
+}
+
+export type CheckoutQuote = {
+  subtotal: number
+  discount_amount: number
+  shipping_amount: number
+  total_amount: number
+  items: { variant_id: string; quantity: number; unit_price: number; total_price: number }[]
+}
+
+export function getCheckoutQuote(value: unknown, requestedItems: { variant_id: string; quantity: number }[]): CheckoutQuote | null {
+  if (!value || typeof value !== 'object') return null
+  const quote = value as CheckoutQuote
+  const isMoney = (amount: unknown): amount is number => typeof amount === 'number' && Number.isFinite(amount) && amount >= 0 && Math.abs(amount * 100 - Math.round(amount * 100)) < 0.00001
+  if (![quote.subtotal, quote.discount_amount, quote.shipping_amount, quote.total_amount].every(isMoney)) return null
+  if (!Array.isArray(quote.items) || quote.items.length !== requestedItems.length || !quote.items.length) return null
+  let subtotalPoisha = 0
+  for (let i = 0; i < quote.items.length; i++) {
+    const line = quote.items[i]
+    const requested = requestedItems[i]
+    if (!line || line.variant_id !== requested.variant_id || line.quantity !== requested.quantity || !Number.isInteger(line.quantity) || line.quantity < 1) return null
+    if (!isMoney(line.unit_price) || !isMoney(line.total_price) || Math.round(line.total_price * 100) !== Math.round(line.unit_price * 100) * line.quantity) return null
+    subtotalPoisha += Math.round(line.total_price * 100)
+  }
+  if (Math.round(quote.subtotal * 100) !== subtotalPoisha || quote.discount_amount > quote.subtotal) return null
+  if (Math.round(quote.total_amount * 100) !== subtotalPoisha - Math.round(quote.discount_amount * 100) + Math.round(quote.shipping_amount * 100)) return null
+  return quote
+}
 
 export const PAYMENT_METHODS = [
   { id: 'bkash', name: 'bKash', description: 'Pay with bKash mobile wallet', icon: '📱' },

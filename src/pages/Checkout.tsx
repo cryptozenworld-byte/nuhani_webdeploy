@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ChevronRight, Check, Shield, Lock } from 'lucide-react'
 import { useCart } from '../contexts/CartContext'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
 import { supabase } from '../lib/supabase'
-import { formatBDT, BD_DISTRICTS, getShippingCost, FREE_SHIPPING_THRESHOLD, PAYMENT_METHODS, districtName, divisionName } from '../lib/constants'
+import { formatBDT, BD_DISTRICTS, getShippingCost, getCheckoutQuote, type CheckoutQuote, PAYMENT_METHODS, districtName, divisionName } from '../lib/constants'
+import { useShippingSettings } from '../hooks/useShippingSettings'
 import { useLanguage } from '../contexts/LanguageContext'
 
 const PAY_LABELS: Record<string, { nameKey: string; descKey: string }> = {
@@ -18,12 +19,18 @@ export default function Checkout() {
   const { t, pick, lang } = useLanguage()
   const location = useLocation()
   const navigate = useNavigate()
-  const { items, subtotal, clearCart } = useCart()
+  const { items, subtotal: cartSubtotal, clearCart } = useCart()
+  const [quote, setQuote] = useState<CheckoutQuote | null>(null)
+  const subtotal = quote?.subtotal ?? Math.round(cartSubtotal * 100) / 100
   const { session } = useAuth()
   const { showToast } = useToast()
 
-  const discount = (location.state as { discount?: number })?.discount ?? 0
+  const discount = quote?.discount_amount ?? (location.state as { discount?: number })?.discount ?? 0
   const couponCode = (location.state as { couponCode?: string })?.couponCode ?? null
+  const freeShipping = !!couponCode && (location.state as { freeShipping?: boolean })?.freeShipping === true
+  const { settings: shippingSettings, loading: shippingLoading, error: shippingError, refresh: refreshShipping } = useShippingSettings()
+  const [shippingNotice, setShippingNotice] = useState('')
+  const quoteRequest = useRef(0)
 
   const [step, setStep] = useState<'shipping' | 'payment' | 'review'>('shipping')
   const [processing, setProcessing] = useState(false)
@@ -41,8 +48,28 @@ export default function Checkout() {
   })
   const [paymentMethod, setPaymentMethod] = useState<'bkash' | 'nagad' | 'card' | 'cod'>('cod')
 
-  const shippingCost = subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : getShippingCost(shippingInfo.district)
-  const total = subtotal - discount + shippingCost
+  useEffect(() => {
+    setQuote(null)
+    setShippingNotice('')
+    setProcessing(false)
+    return () => { quoteRequest.current++ }
+  }, [items, shippingInfo, couponCode, paymentMethod])
+
+  const shippingCost = shippingSettings ? quote?.shipping_amount ?? getShippingCost(shippingInfo.district, shippingSettings, subtotal, freeShipping) : null
+  const total = shippingCost === null ? null : quote?.total_amount ?? Math.round((subtotal - discount + shippingCost) * 100) / 100
+
+  const fetchOrderQuote = async () => {
+    const requestedItems = items.map(({ variant_id, quantity }) => ({ variant_id, quantity }))
+    const { data, error } = await supabase.rpc('get_order_quote', {
+      p_items: requestedItems,
+      p_district: shippingInfo.district,
+      p_coupon_code: couponCode,
+    })
+    if (error) throw error
+    const currentQuote = getCheckoutQuote(data, requestedItems)
+    if (!currentQuote) throw new Error(t('checkout.shippingUnavailable'))
+    return currentQuote
+  }
 
   const validateShipping = () => {
     const fieldLabels: Record<string, string> = {
@@ -67,13 +94,35 @@ export default function Checkout() {
   }
 
   const handlePlaceOrder = async () => {
+    if (processing || shippingLoading) return
+    if (shippingCost === null) {
+      showToast(t('checkout.shippingUnavailable'), 'error')
+      return
+    }
+    if (!validateShipping()) return
     if (items.length === 0) {
       showToast('Your cart is empty', 'error')
       return
     }
 
+    const currentRequest = ++quoteRequest.current
     setProcessing(true)
+    setShippingNotice('')
     try {
+      const currentSettings = await refreshShipping()
+      if (currentRequest !== quoteRequest.current) return
+      if (!currentSettings) {
+        showToast(t('checkout.shippingUnavailable'), 'error')
+        return
+      }
+      const currentQuote = await fetchOrderQuote()
+      if (currentRequest !== quoteRequest.current) return
+      const linePricesChanged = currentQuote.items.some((line, i) => line.unit_price !== (quote?.items[i]?.unit_price ?? items[i].variant?.price))
+      if (currentQuote.shipping_amount !== shippingCost || currentQuote.subtotal !== subtotal || currentQuote.discount_amount !== discount || currentQuote.total_amount !== total || linePricesChanged) {
+        setQuote(currentQuote)
+        setShippingNotice(t('checkout.shippingChanged'))
+        return
+      }
       // Server-authoritative order creation: pricing, stock, coupon and totals
       // are all validated/computed inside the place_order() database function.
       const rpcItems = items.map((item) => ({
@@ -93,6 +142,8 @@ export default function Checkout() {
           district: shippingInfo.district,
           division: shippingInfo.division,
           postal_code: shippingInfo.postal_code || null,
+          expected_shipping_amount: currentQuote.shipping_amount,
+          expected_total_amount: currentQuote.total_amount,
         },
         p_payment_method: paymentMethod,
         p_coupon_code: couponCode,
@@ -140,10 +191,26 @@ export default function Checkout() {
 
       navigate(`/order-confirmation/${order.order_number}`)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : t('checkout.failedToPlace')
-      showToast(msg, 'error')
+      if (currentRequest !== quoteRequest.current) return
+      const msg = err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' ? err.message : t('checkout.failedToPlace')
+      if (msg.includes('Shipping charge has changed') || msg.includes('Order total has changed')) {
+        await refreshShipping()
+        if (currentRequest !== quoteRequest.current) return
+        try {
+          const nextQuote = await fetchOrderQuote()
+          if (currentRequest !== quoteRequest.current) return
+          setQuote(nextQuote)
+        } catch {
+          if (currentRequest !== quoteRequest.current) return
+          setQuote(null)
+        }
+        setShippingNotice(t('checkout.shippingChanged'))
+      } else {
+        showToast(msg, 'error')
+      }
+    } finally {
+      if (currentRequest === quoteRequest.current) setProcessing(false)
     }
-    setProcessing(false)
   }
 
   if (items.length === 0) {
@@ -193,6 +260,7 @@ export default function Checkout() {
                   <label className="text-sm text-ink-600 mb-1.5 block">{t('checkout.fullName')} *</label>
                   <input
                     type="text"
+                    aria-label={t('checkout.fullName')}
                     value={shippingInfo.full_name}
                     onChange={(e) => setShippingInfo({ ...shippingInfo, full_name: e.target.value })}
                     className="input-field"
@@ -215,6 +283,7 @@ export default function Checkout() {
                     <label className="text-sm text-ink-600 mb-1.5 block">{t('checkout.email')} *</label>
                     <input
                       type="email"
+                      aria-label={t('checkout.email')}
                       value={shippingInfo.email}
                       onChange={(e) => setShippingInfo({ ...shippingInfo, email: e.target.value })}
                       className="input-field"
@@ -247,6 +316,7 @@ export default function Checkout() {
                   <label className="text-sm text-ink-600 mb-1.5 block">{t('checkout.city')} *</label>
                   <input
                     type="text"
+                    aria-label={t('checkout.city')}
                     value={shippingInfo.city}
                     onChange={(e) => setShippingInfo({ ...shippingInfo, city: e.target.value })}
                     className="input-field"
@@ -392,7 +462,7 @@ export default function Checkout() {
               <div className="mb-6">
                 <h4 className="text-sm font-medium text-ink-700 mb-2">{t('checkout.items')}</h4>
                 <div className="space-y-2">
-                  {items.map((item) => {
+                  {items.map((item, i) => {
                     const variant = 'variant' in item ? item.variant : undefined
                     const variantLabel = [variant?.size?.trim(), variant?.color?.trim()].filter(Boolean).join(' · ')
                     return (
@@ -402,7 +472,7 @@ export default function Checkout() {
                           {variantLabel && ` (${variantLabel})`}
                         </span>
                         <span className="text-ink-700 font-medium">
-                          {formatBDT((variant?.price ?? 0) * item.quantity)}
+                          {formatBDT(quote?.items[i]?.total_price ?? (variant?.price ?? 0) * item.quantity)}
                         </span>
                       </div>
                     )
@@ -411,10 +481,10 @@ export default function Checkout() {
               </div>
 
               <div className="flex gap-3">
-                <button onClick={() => setStep('payment')} className="btn-outline flex-1">{t('common.back')}</button>
+                <button onClick={() => setStep('payment')} disabled={processing} className="btn-outline flex-1">{t('common.back')}</button>
                 <button
                   onClick={handlePlaceOrder}
-                  disabled={processing}
+                  disabled={processing || shippingLoading || shippingCost === null}
                   className="btn-primary flex-1 flex items-center justify-center gap-2"
                 >
                   {processing ? (
@@ -423,7 +493,7 @@ export default function Checkout() {
                       {paymentMethod === 'cod' ? t('checkout.placingOrder') : t('checkout.redirecting')}
                     </>
                   ) : (
-                    paymentMethod === 'cod' ? t('checkout.placeOrderWith', { price: formatBDT(total) }) : t('checkout.payWith', { price: formatBDT(total) })
+                    total === null ? t('common.loading') : paymentMethod === 'cod' ? t('checkout.placeOrderWith', { price: formatBDT(total) }) : t('checkout.payWith', { price: formatBDT(total) })
                   )}
                 </button>
               </div>
@@ -448,13 +518,15 @@ export default function Checkout() {
               )}
               <div className="flex justify-between text-ink-600">
                 <span>{t('cart.shipping')}</span>
-                <span>{shippingCost === 0 ? t('checkout.free') : formatBDT(shippingCost)}</span>
+                <span>{shippingLoading ? t('common.loading') : shippingCost === null ? '—' : shippingCost === 0 ? t('checkout.free') : formatBDT(shippingCost)}</span>
               </div>
             </div>
             <div className="flex justify-between text-lg font-semibold text-ink-800 border-t border-stone-200 pt-4 mt-4">
               <span>{t('cart.total')}</span>
-              <span>{formatBDT(total)}</span>
+              <span>{shippingLoading ? t('common.loading') : total === null ? '—' : formatBDT(total)}</span>
             </div>
+            {shippingError && <div role="alert" className="mt-4 text-sm text-red-600"><p>{t('checkout.shippingUnavailable')}</p><button onClick={() => { void refreshShipping() }} className="mt-2 underline">{t('checkout.retryShipping')}</button></div>}
+            {shippingNotice && <p role="alert" className="mt-4 text-sm text-amber-700">{shippingNotice}</p>}
           </div>
         </div>
       </div>

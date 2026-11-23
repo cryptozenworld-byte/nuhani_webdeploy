@@ -40,6 +40,7 @@ type Translations = {
     heroParagraph: string
     lovedAcross: string
     freeDelivery: string
+    nationwideDelivery: string
     easyReturns: string
     altNewSeason: string
     newIn: string
@@ -244,6 +245,9 @@ type Translations = {
     gatewayError: string
     gatewayNotConfigured: string
     failedToPlace: string
+    shippingUnavailable: string
+    shippingChanged: string
+    retryShipping: string
   }
   shop: {
     clearAll: string
@@ -393,7 +397,8 @@ const en: Translations = {
     heroParagraph:
       'Considered pieces cut from premium fabrics — designed in Dhaka, made in Bangladesh, and delivered to your door. Numbered small batches, finished by hand.',
     lovedAcross: 'Loved across Bangladesh',
-    freeDelivery: 'Free delivery over ৳3,000',
+    freeDelivery: 'Free delivery on orders of {price} or more',
+    nationwideDelivery: 'Nationwide delivery',
     easyReturns: '7-day easy returns',
     altNewSeason: 'Nuhani — new season',
     newIn: 'New in',
@@ -575,6 +580,9 @@ const en: Translations = {
     gatewayError: 'Payment gateway error. Order placed with pending payment.',
     gatewayNotConfigured: 'Payment gateway not configured. Order placed with pending payment.',
     failedToPlace: 'Failed to place order. Please try again.',
+    shippingUnavailable: 'Delivery pricing is unavailable. Please try again before placing your order.',
+    shippingChanged: 'Your order pricing has changed. Please review the updated total and submit again.',
+    retryShipping: 'Try again',
   },
   shop: {
     clearAll: 'Clear all',
@@ -713,7 +721,8 @@ const bn: Translations = {
     heroParagraph:
       'প্রিমিয়াম কাপড়ে কাটা বাছাই করা পোশাক — ডিজাইন ঢাকায়, তৈরি বাংলাদেশে, পৌঁছে যায় আপনার দরজায়। নম্বরযুক্ত ছোট ব্যাচে, হাতে হাতে সমাপ্ত।',
     lovedAcross: 'সারা বাংলাদেশে ভালোবাসা পেয়েছে',
-    freeDelivery: '৳3,000+ অর্ডারে ফ্রি ডেলিভারি',
+    freeDelivery: '{price} বা তার বেশি অর্ডারে ফ্রি ডেলিভারি',
+    nationwideDelivery: 'সারা দেশে ডেলিভারি',
     easyReturns: '৭ দিনের সহজ রিটার্ন',
     altNewSeason: 'নুহানি — নতুন মৌসুম',
     newIn: 'নতুন',
@@ -895,6 +904,9 @@ const bn: Translations = {
     gatewayError: 'পেমেন্ট গেটওয়ে ত্রুটি। পেমেন্ট বাকি থেকে অর্ডার নেওয়া হয়েছে।',
     gatewayNotConfigured: 'পেমেন্ট গেটওয়ে কনফিগার করা নেই। পেমেন্ট বাকি থেকে অর্ডার নেওয়া হয়েছে।',
     failedToPlace: 'অর্ডার দিতে ব্যর্থ। আবার চেষ্টা করুন।',
+    shippingUnavailable: 'ডেলিভারি চার্জ জানা যাচ্ছে না। অর্ডার দেওয়ার আগে আবার চেষ্টা করুন।',
+    shippingChanged: 'অর্ডারের মূল্য পরিবর্তিত হয়েছে। নতুন মোট মূল্য দেখে আবার অর্ডার দিন।',
+    retryShipping: 'আবার চেষ্টা করুন',
   },
   shop: {
     clearAll: 'সব মুছুন',

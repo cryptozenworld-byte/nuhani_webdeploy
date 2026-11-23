@@ -6,7 +6,7 @@ import ProductCard from '../components/ProductCard'
 import Seo from '../components/Seo'
 import { useToast } from '../contexts/ToastContext'
 import { useLanguage } from '../contexts/LanguageContext'
-import { formatBDT } from '../lib/constants'
+import { formatBDT, getShippingSettings } from '../lib/constants'
 
 const homeJsonLd = {
   '@context': 'https://schema.org',
@@ -100,10 +100,12 @@ export default function Home() {
     { quote: t('home.quote3'), name: 'Tahmina K.', city: t('home.citySylhet') },
   ]
 
+  const shippingSettings = getShippingSettings(settings)
+  const freeDeliveryText = shippingSettings ? t('home.freeDelivery', { price: formatBDT(shippingSettings.free_shipping_threshold) }) : t('home.nationwideDelivery')
   const marqueeItems =
     categories.length > 0
       ? categories.map((c) => pick(c.name, c.name_bn))
-      : [t('home.premiumFabrics'), t('home.freeDelivery'), t('home.easyReturns'), t('home.madeInBD')]
+      : [t('home.premiumFabrics'), freeDeliveryText, t('home.easyReturns'), t('home.madeInBD')]
 
   // Drifting fabric folds for dark sections
   const FabricFolds = () => (
@@ -191,7 +193,7 @@ export default function Home() {
             </div>
             <div className="mt-12 flex flex-wrap gap-x-9 gap-y-2 font-mono text-[11px] tracking-[0.08em] text-ink-600">
               <span><span className="text-champagne-500 tracking-[0.1em]" aria-hidden="true">★★★★★</span> {t('home.lovedAcross')}</span>
-              <span>{t('home.freeDelivery')}</span>
+              <span>{freeDeliveryText}</span>
               <span>{t('home.easyReturns')}</span>
             </div>
           </div>

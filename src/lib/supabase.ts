@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import type { ShippingSettings } from './constants'
 
 const supabaseUrl = (import.meta as unknown as Record<string, Record<string, string>>).env.VITE_SUPABASE_URL
 
@@ -17,7 +18,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
  * Public, non-secret subset of site_settings returned by the get_public_settings()
  * RPC. The table itself is admin-only (it stores payment/courier/Telegram secrets).
  */
-export type PublicSettings = {
+export type PublicSettings = ShippingSettings & {
   logo_url: string | null
   site_name: string | null
   phone: string | null
@@ -230,7 +231,7 @@ export type ContactMessage = {
   created_at: string
 }
 
-export type SiteSettings = {
+export type SiteSettings = ShippingSettings & {
   id: string
   logo_url: string | null
   site_name: string

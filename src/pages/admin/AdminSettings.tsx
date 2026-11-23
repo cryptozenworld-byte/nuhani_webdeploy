@@ -3,6 +3,7 @@ import { Save, Upload, Phone, Mail, MapPin, Instagram, Facebook, Youtube, Twitte
 import { supabase, supabaseUrl, type SiteSettings } from '../../lib/supabase'
 import { useToast } from '../../contexts/ToastContext'
 import AdminBackLink from '../../components/AdminBackLink'
+import { getShippingSettings, parseShippingSettings, type ShippingSettings } from '../../lib/constants'
 
 /** One D-card image control: preview, upload, paste-URL, and revert-to-product-photo. */
 function AdminImageField({
@@ -68,6 +69,11 @@ export default function AdminSettings() {
   const { showToast } = useToast()
   const [settings, setSettings] = useState<SiteSettings | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [shippingError, setShippingError] = useState('')
+  const [shippingDraft, setShippingDraft] = useState<Record<keyof ShippingSettings, string>>({
+    shipping_chattogram_rate: '', shipping_default_rate: '', free_shipping_threshold: '',
+  })
   const [saving, setSaving] = useState(false)
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const [uploadingHero, setUploadingHero] = useState(false)
@@ -81,48 +87,76 @@ export default function AdminSettings() {
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase.from('site_settings').select('*').maybeSingle()
-    setSettings(data as SiteSettings | null)
-    setLoading(false)
+    setLoadError('')
+    try {
+      const { data, error } = await supabase.from('site_settings').select('*').maybeSingle()
+      if (error || !data) throw new Error('Could not load site settings. Please try again.')
+      const shipping = getShippingSettings(data)
+      if (!shipping) throw new Error('Shipping settings are unavailable. The shipping database migration must be applied before saving settings.')
+      setSettings(data as SiteSettings)
+      setShippingDraft({
+        shipping_chattogram_rate: String(shipping.shipping_chattogram_rate),
+        shipping_default_rate: String(shipping.shipping_default_rate),
+        free_shipping_threshold: String(shipping.free_shipping_threshold),
+      })
+    } catch (error) {
+      setSettings(null)
+      setLoadError(error instanceof Error ? error.message : 'Could not load site settings.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleSave = async () => {
-    if (!settings) return
+    if (!settings || saving) return
+    const shipping = parseShippingSettings(shippingDraft)
+    if (!shipping) {
+      setShippingError('Enter whole-taka amounts from 0 to 1,000,000. The free-delivery minimum must be greater than 0.')
+      return
+    }
+    setShippingError('')
     setSaving(true)
-    const { error } = await supabase.from('site_settings').update({
-      logo_url: settings.logo_url || null,
-      site_name: settings.site_name,
-      phone: settings.phone,
-      email: settings.email,
-      address: settings.address,
-      instagram_url: settings.instagram_url,
-      facebook_url: settings.facebook_url,
-      youtube_url: settings.youtube_url,
-      twitter_url: settings.twitter_url,
-      hero_image_url: settings.hero_image_url || null,
-      hero_mobile_image_url: settings.hero_mobile_image_url || null,
-      story_image_url: settings.story_image_url || null,
-      about_hero_image_url: settings.about_hero_image_url || null,
-      pathao_api_key: settings.pathao_api_key,
-      steadfast_api_key: settings.steadfast_api_key,
-      courier_provider: settings.courier_provider,
-      sslcommerz_store_id: settings.sslcommerz_store_id,
-      sslcommerz_store_password: settings.sslcommerz_store_password,
-      bkash_app_key: settings.bkash_app_key,
-      bkash_app_secret: settings.bkash_app_secret,
-      bkash_username: settings.bkash_username,
-      bkash_password: settings.bkash_password,
-      nagad_merchant_id: settings.nagad_merchant_id,
-      nagad_api_key: settings.nagad_api_key,
-      payment_mode: settings.payment_mode,
-      telegram_bot_token: settings.telegram_bot_token,
-      telegram_chat_id: settings.telegram_chat_id,
-      telegram_bot_username: settings.telegram_bot_username,
-      whatsapp_number: settings.whatsapp_number,
-    }).eq('id', settings.id)
-    if (error) showToast('Failed to save settings', 'error')
-    else showToast('Settings saved!', 'success')
-    setSaving(false)
+    try {
+      const { data, error } = await supabase.from('site_settings').update({
+        ...shipping,
+        logo_url: settings.logo_url || null,
+        site_name: settings.site_name,
+        phone: settings.phone,
+        email: settings.email,
+        address: settings.address,
+        instagram_url: settings.instagram_url,
+        facebook_url: settings.facebook_url,
+        youtube_url: settings.youtube_url,
+        twitter_url: settings.twitter_url,
+        hero_image_url: settings.hero_image_url || null,
+        hero_mobile_image_url: settings.hero_mobile_image_url || null,
+        story_image_url: settings.story_image_url || null,
+        about_hero_image_url: settings.about_hero_image_url || null,
+        pathao_api_key: settings.pathao_api_key,
+        steadfast_api_key: settings.steadfast_api_key,
+        courier_provider: settings.courier_provider,
+        sslcommerz_store_id: settings.sslcommerz_store_id,
+        sslcommerz_store_password: settings.sslcommerz_store_password,
+        bkash_app_key: settings.bkash_app_key,
+        bkash_app_secret: settings.bkash_app_secret,
+        bkash_username: settings.bkash_username,
+        bkash_password: settings.bkash_password,
+        nagad_merchant_id: settings.nagad_merchant_id,
+        nagad_api_key: settings.nagad_api_key,
+        payment_mode: settings.payment_mode,
+        telegram_bot_token: settings.telegram_bot_token,
+        telegram_chat_id: settings.telegram_chat_id,
+        telegram_bot_username: settings.telegram_bot_username,
+        whatsapp_number: settings.whatsapp_number,
+      }).eq('id', settings.id).select('id').single()
+      if (error || !data || data.id !== settings.id) throw new Error('Failed to save settings')
+      setSettings((current) => current ? { ...current, ...shipping } : current)
+      showToast('Settings saved!', 'success')
+    } catch {
+      showToast('Failed to save settings. Your changes have not been saved.', 'error')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleConnectTelegram = async () => {
@@ -177,13 +211,46 @@ export default function AdminSettings() {
   }
 
   if (!settings) {
-    return <div className="section-padding py-20 text-center"><p className="text-ink-400">Settings not found.</p></div>
+    return <div className="section-padding py-20 text-center space-y-4"><p role="alert" className="text-ink-600">{loadError || 'Settings not found.'}</p><button onClick={load} className="btn-secondary">Try again</button></div>
   }
 
   return (
     <div className="section-padding py-8 max-w-2xl mx-auto animate-fade-in">
       <AdminBackLink />
       <h1 className="text-3xl font-serif text-ink-800 mb-8">Site Settings</h1>
+
+      {/* Shipping */}
+      <div className="card p-6 mb-6">
+        <h2 className="text-lg font-serif text-ink-800 mb-4 flex items-center gap-2"><Truck size={18} /> Shipping</h2>
+        <div className="space-y-4">
+          {([
+            { field: 'shipping_chattogram_rate', label: 'Chittagong / Chattogram delivery charge (৳)' },
+            { field: 'shipping_default_rate', label: 'All other districts delivery charge (৳)' },
+            { field: 'free_shipping_threshold', label: 'Free-delivery minimum subtotal (৳)' },
+          ] as const).map(({ field, label }) => (
+            <div key={field}>
+              <label htmlFor={field} className="text-sm text-ink-600 mb-1.5 block">{label}</label>
+              <input
+                id={field}
+                type="number"
+                min={field === 'free_shipping_threshold' ? 1 : 0}
+                max={1000000}
+                step={1}
+                required
+                value={shippingDraft[field]}
+                onChange={(e) => { setShippingDraft({ ...shippingDraft, [field]: e.target.value }); setShippingError('') }}
+                disabled={saving}
+                aria-describedby="shipping-hint shipping-error"
+                aria-invalid={!!shippingError}
+                className="input-field"
+              />
+            </div>
+          ))}
+          <p id="shipping-hint" className="text-xs text-ink-500">The local rate applies to Chittagong / Chattogram district, including the city—not the entire division. Free delivery starts at this product subtotal, before coupon discounts. Valid free-shipping coupons also waive delivery. Changes apply to new orders only.</p>
+          <p className="text-xs text-ink-500">Click Save Settings below to apply your changes.</p>
+          <p id="shipping-error" role={shippingError ? 'alert' : undefined} className="text-sm text-red-600">{shippingError}</p>
+        </div>
+      </div>
 
       {/* Logo */}
       <div className="card p-6 mb-6">

@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom'
 import { Minus, Plus, Trash2, ShoppingBag, Tag, Truck } from 'lucide-react'
 import { useCart } from '../contexts/CartContext'
-import { formatBDT, FREE_SHIPPING_THRESHOLD } from '../lib/constants'
+import { formatBDT } from '../lib/constants'
+import { useShippingSettings } from '../hooks/useShippingSettings'
 import { useState } from 'react'
 import { supabase, type Coupon } from '../lib/supabase'
 import { useToast } from '../contexts/ToastContext'
@@ -16,8 +17,10 @@ export default function Cart() {
   const [coupon, setCoupon] = useState<Coupon | null>(null)
   const [applying, setApplying] = useState(false)
 
-  const remainingForFreeShipping = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal)
-  const freeShippingProgress = Math.min(100, (subtotal / FREE_SHIPPING_THRESHOLD) * 100)
+  const { settings: shippingSettings } = useShippingSettings()
+  const deliverySubtotal = Math.round(subtotal * 100) / 100
+  const remainingForFreeShipping = shippingSettings ? Math.max(0, shippingSettings.free_shipping_threshold - deliverySubtotal) : null
+  const freeShippingProgress = shippingSettings ? Math.min(100, (deliverySubtotal / shippingSettings.free_shipping_threshold) * 100) : 0
 
   const applyCoupon = async () => {
     if (!couponCode.trim()) return
@@ -86,7 +89,7 @@ export default function Cart() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Cart Items */}
         <div className="lg:col-span-2 space-y-4">
-          {remainingForFreeShipping > 0 ? (
+          {remainingForFreeShipping === null ? null : remainingForFreeShipping > 0 && coupon?.type !== 'free_shipping' ? (
             <div className="bg-mink-50 border border-mink-200 rounded-2xl p-4 mb-4">
               <p className="text-sm text-ink-600 flex items-center gap-2">
                 <Truck size={16} /> {t('cart.addMoreForFree', { price: formatBDT(remainingForFreeShipping) })}
@@ -210,7 +213,7 @@ export default function Cart() {
 
             <Link
               to="/checkout"
-              state={{ discount, couponCode: coupon?.code ?? null }}
+              state={{ discount, couponCode: coupon?.code ?? null, freeShipping: coupon?.type === 'free_shipping' }}
               className="btn-primary w-full mt-6 text-center flex items-center justify-center gap-2"
             >
               {t('cart.proceedCheckout')} <ShoppingBag size={18} />
